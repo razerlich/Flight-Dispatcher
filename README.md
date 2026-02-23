@@ -40,6 +40,6 @@ defaultAirport: "LLBG", // Pre-fills the ICAO input on first load
 
 ## Notes
 - Only ICAO codes (4 letters) are supported as input. IATA support (3 letters) can be added with a small resolver endpoint.
-- ARR and DUR are estimates based on great-circle distance at ~480 kt average speed.
+- ARR and DUR come from the real scheduled arrival time provided by the API. If arrival data is unavailable for a flight, values are estimated from great-circle distance at ~480 kt average speed and marked with `~`.
 - Airport coordinate data is bundled from OurAirports (public domain).
 - The server caches flight data for 60 seconds to stay within the free API tier.
