@@ -25,6 +25,7 @@ export async function GET(req: Request) {
   const url = new URL(baseUrl);
   url.searchParams.set("offsetMinutes", offsetMinutes);
   url.searchParams.set("durationMinutes", durationMinutes);
+  url.searchParams.set("withLeg", "true"); // include arrival airport + scheduled arrival time
 
   const apiKey = process.env.RAPIDAPI_KEY;
   if (!apiKey) {

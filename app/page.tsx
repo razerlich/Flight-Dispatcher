@@ -13,6 +13,13 @@ type AirportRecord = {
   name: string;
 };
 
+/** Normalize AeroDataBox UTC strings ("2026-02-23 21:10" or "...Z") to proper ISO. */
+function normalizeUtc(s: string | undefined): string | undefined {
+  if (!s) return undefined;
+  const t = s.replace(" ", "T");
+  return t.endsWith("Z") ? t : t + "Z";
+}
+
 function fmtTime(dateISO: string, mode: TimeMode, airportTz?: string) {
   const d = new Date(dateISO);
   if (Number.isNaN(d.getTime())) return "—";
@@ -134,36 +141,35 @@ type Row = {
   airlineName?: string;
   airlineIcao?: string;
   dep?: string;
-  estMins: number | null;
+  arr?: string;          // real scheduled arrival UTC (withLeg=true)
+  estMins: number | null; // haversine fallback when arr is missing
 };
 
 type FlightEntry = {
-  movement?: {
+  departure?: {
+    scheduledTime?: { utc?: string; local?: string };
+    terminal?: string;
+  };
+  arrival?: {
     airport?: { icao?: string; iata?: string; countryCode?: string; timeZone?: string };
     scheduledTime?: { utc?: string; local?: string };
   };
   number?: string;
   airline?: { name?: string; iata?: string; icao?: string };
-  // Legacy fallback fields
-  departure?: { scheduledTimeUtc?: string; scheduledTime?: string; scheduledTimeLocal?: string };
-  arrival?: {
-    scheduledTimeUtc?: string;
-    scheduledTime?: string;
-    scheduledTimeLocal?: string;
-    airport?: { icao?: string; iata?: string };
-  };
-  departureTimeUtc?: string;
-  departureTime?: string;
-  destination?: { icao?: string; iata?: string };
 };
 
 type FidsResponse = {
   error?: string;
   departures?: FlightEntry[] | { items?: FlightEntry[] };
   departing?: FlightEntry[];
-  airport?: { timeZone?: string; timezone?: string };
-  timeZone?: string;
 };
+
+function getList(data: FidsResponse | null): FlightEntry[] {
+  const rawDeps = data?.departures;
+  if (!rawDeps) return data?.departing ?? [];
+  if (Array.isArray(rawDeps)) return rawDeps;
+  return rawDeps.items ?? data?.departing ?? [];
+}
 
 export default function Page() {
   const [icao, setIcao] = useState("");
@@ -196,15 +202,9 @@ export default function Page() {
       setData(json);
 
       // Collect all ICAOs (origin + unique destinations)
-      const rawDeps = json?.departures;
-      const list: FlightEntry[] = !rawDeps
-        ? (json?.departing ?? [])
-        : Array.isArray(rawDeps)
-          ? rawDeps
-          : (rawDeps.items ?? json?.departing ?? []);
-
+      const list = getList(json);
       const destIcaos = list
-        .map((f) => f.movement?.airport?.icao)
+        .map((f) => f.arrival?.airport?.icao)
         .filter((x): x is string => !!x);
 
       const allIcaos = [...new Set([v, ...destIcaos])];
@@ -226,43 +226,17 @@ export default function Page() {
 
   const originInfo = airportMap[queriedIcao] ?? null;
 
-  // Timezone for the origin airport (for "Airport" time mode)
-  const originTz = originInfo
-    ? undefined // will use the tz derived from the local offset string
-    : data?.airport?.timeZone ?? data?.timeZone ?? data?.airport?.timezone ?? undefined;
-
   const rows: Row[] = useMemo(() => {
-    const rawDeps = data?.departures;
-    const list: FlightEntry[] = !rawDeps
-      ? (data?.departing ?? [])
-      : Array.isArray(rawDeps)
-        ? rawDeps
-        : (rawDeps.items ?? data?.departing ?? []);
+    const list = getList(data);
 
     return list
       .map((f: FlightEntry) => {
-        const dep =
-          f?.movement?.scheduledTime?.utc ||
-          f?.movement?.scheduledTime?.local ||
-          f?.departure?.scheduledTimeUtc ||
-          f?.departure?.scheduledTime ||
-          f?.departure?.scheduledTimeLocal ||
-          f?.departureTimeUtc ||
-          f?.departureTime;
+        const dep = normalizeUtc(f.departure?.scheduledTime?.utc);
+        const arr = normalizeUtc(f.arrival?.scheduledTime?.utc);
+        const dest = f.arrival?.airport?.icao ?? f.arrival?.airport?.iata ?? "—";
 
-        const dest =
-          f?.movement?.airport?.icao ||
-          f?.movement?.airport?.iata ||
-          f?.arrival?.airport?.icao ||
-          f?.arrival?.airport?.iata ||
-          f?.destination?.icao ||
-          f?.destination?.iata ||
-          "—";
-
-        // countryCode from API response is lowercase ("gb"), our DB is uppercase ("GB")
         const destCountry =
-          f?.movement?.airport?.countryCode?.toUpperCase() ??
-          airportMap[dest]?.country;
+          f.arrival?.airport?.countryCode?.toUpperCase() ?? airportMap[dest]?.country;
 
         const destInfo = airportMap[dest];
         const originInfoLocal = airportMap[queriedIcao];
@@ -277,11 +251,12 @@ export default function Page() {
           dest,
           destCity: destInfo?.city,
           destCountry,
-          destTz: f?.movement?.airport?.timeZone,
-          number: f?.number,
-          airlineName: f?.airline?.name,
-          airlineIcao: f?.airline?.icao,
+          destTz: f.arrival?.airport?.timeZone,
+          number: f.number,
+          airlineName: f.airline?.name,
+          airlineIcao: f.airline?.icao,
           dep,
+          arr,
           estMins
         };
       })
@@ -293,46 +268,15 @@ export default function Page() {
       });
   }, [data, airportMap, queriedIcao, originInfo]);
 
-  // For "Airport" time mode: use origin airport timezone
-  // We derive it from the local time offset in the first flight's scheduledTime.local
-  const airportTz = useMemo(() => {
-    if (originTz) return originTz;
-    // Try to extract timezone from movement.scheduledTime.local offset (+02:00 etc.)
-    // using the Intl timezone from our airport DB
-    const rawDeps = data?.departures;
-    const list: FlightEntry[] = !rawDeps
-      ? (data?.departing ?? [])
-      : Array.isArray(rawDeps)
-        ? rawDeps
-        : (rawDeps.items ?? []);
-    const sample = list[0]?.movement?.scheduledTime?.local;
-    if (sample) {
-      // "2026-02-23 22:40+02:00" → extract offset and find IANA tz via Intl... not trivial
-      // Fall back to using our airport DB timezone
-    }
-    return originInfo ? undefined : undefined; // will fall back to local display
-  }, [data, originTz, originInfo]);
-
-  // Better: get tz from airport DB for the origin
+  // Derive origin airport timezone from departure local time offset string
   const displayTz = useMemo(() => {
     if (timeMode !== "airport") return undefined;
-    // Try to get IANA timezone from our airport data for the origin airport
-    // We don't store tz in airports.json (only lat/lon/city/country/name)
-    // Fall back to extracting from the first flight's local timestamp
-    const rawDeps = data?.departures;
-    const list: FlightEntry[] = !rawDeps
-      ? (data?.departing ?? [])
-      : Array.isArray(rawDeps)
-        ? rawDeps
-        : (rawDeps.items ?? []);
-    const sample = list[0]?.movement?.scheduledTime?.local;
+    const list = getList(data);
+    const sample = list[0]?.departure?.scheduledTime?.local;
     if (sample) {
-      // Parse the UTC offset from "2026-02-23 22:40+02:00"
       const match = sample.match(/([+-]\d{2}:\d{2})$/);
       if (match) {
-        // Convert offset to a fixed timezone string
-        // e.g. "+02:00" → "Etc/GMT-2" (note: Etc/GMT signs are inverted)
-        const offsetStr = match[1]; // "+02:00"
+        const offsetStr = match[1]; // e.g. "+02:00"
         const sign = offsetStr[0] === "+" ? -1 : 1;
         const hours = parseInt(offsetStr.slice(1, 3), 10);
         if (hours === 0) return "UTC";
@@ -350,7 +294,7 @@ export default function Page() {
         <header className="space-y-1">
           <h1 className="text-2xl font-semibold">Flight Dispatcher</h1>
           <p className="text-slate-400 text-sm">
-            בוחר שדה → מקבל יציאות בינלאומיות מהעכשיו + משך טיסה משוער → פותח ב‑SimBrief עם {config.simbrief.baseType}
+            Pick an airport → get upcoming international departures → open in SimBrief with {config.simbrief.baseType}
           </p>
         </header>
 
@@ -377,7 +321,7 @@ export default function Page() {
               onClick={load}
               disabled={loading}
             >
-              {loading ? "טוען..." : "הבא יציאות מהעכשיו"}
+              {loading ? "Loading..." : "Get departures"}
             </button>
 
             <div className="flex gap-2">
@@ -403,7 +347,7 @@ export default function Page() {
         <section className="rounded-2xl bg-slate-900/40 p-4 shadow">
           {!data && !loading && (
             <div className="text-slate-400">
-              הכנס שדה (למשל <span className="font-mono">LLBG</span>) ולחץ על הכפתור.
+              Enter an airport ICAO (e.g. <span className="font-mono">LLBG</span>) and click the button.
             </div>
           )}
 
@@ -419,18 +363,26 @@ export default function Page() {
                     <th className="text-left py-2 pr-4">FLIGHT</th>
                     <th className="text-left py-2 pr-4">DEST</th>
                     <th className="text-left py-2 pr-4">DEP</th>
-                    <th className="text-left py-2 pr-4">ARR <span className="text-slate-500 font-normal text-xs">est</span></th>
-                    <th className="text-left py-2 pr-4">DUR <span className="text-slate-500 font-normal text-xs">est</span></th>
+                    <th className="text-left py-2 pr-4">ARR</th>
+                    <th className="text-left py-2 pr-4">DUR</th>
                     <th className="text-left py-2 pr-3"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((r, i) => {
-                    const arrISO =
-                      r.dep && r.estMins ? estArrISO(r.dep, r.estMins) : undefined;
-                    // For "airport" mode on ARR, use destination tz
-                    const arrTz =
-                      timeMode === "airport" ? (r.destTz ?? undefined) : undefined;
+                    // Real arrival from withLeg=true; fall back to haversine estimate
+                    const arrISO = r.arr ?? (r.dep && r.estMins ? estArrISO(r.dep, r.estMins) : undefined);
+                    const isEstimate = !r.arr;
+
+                    const durMins =
+                      r.arr && r.dep
+                        ? Math.round(
+                            (new Date(r.arr).getTime() - new Date(r.dep).getTime()) / 60000
+                          )
+                        : r.estMins;
+
+                    const arrTz = timeMode === "airport" ? (r.destTz ?? undefined) : undefined;
+
                     return (
                       <tr key={i} className="border-b border-slate-800/60 hover:bg-slate-900/30">
                         <td className="py-2 pr-4 whitespace-nowrap">
@@ -450,18 +402,22 @@ export default function Page() {
                           )}
                         </td>
                         <td className="py-2 pr-4 whitespace-nowrap">
-                          {r.dep ? fmtTime(r.dep, timeMode, displayTz ?? airportTz) : "—"}
+                          {r.dep ? fmtTime(r.dep, timeMode, displayTz) : "—"}
                         </td>
                         <td className="py-2 pr-4 whitespace-nowrap">
-                          {arrISO ? fmtTime(arrISO, timeMode, arrTz) : "—"}
+                          {arrISO
+                            ? (isEstimate ? "~" : "") + fmtTime(arrISO, timeMode, arrTz)
+                            : "—"}
                         </td>
                         <td className="py-2 pr-4 whitespace-nowrap">
-                          {r.estMins ? `~${minsToHMM(r.estMins)}` : "—"}
+                          {durMins
+                            ? (isEstimate ? "~" : "") + minsToHMM(durMins)
+                            : "—"}
                         </td>
                         <td className="py-2 pr-3 whitespace-nowrap">
                           <a
                             className="text-indigo-300 hover:text-indigo-200"
-                            href={simbriefLink(orig, r.dest, r.dep, r.estMins, r.airlineIcao, r.number)}
+                            href={simbriefLink(orig, r.dest, r.dep, durMins, r.airlineIcao, r.number)}
                             target="_blank"
                             rel="noreferrer"
                           >
@@ -475,14 +431,14 @@ export default function Page() {
               </table>
 
               <div className="mt-2 text-xs text-slate-500">
-                מציג {rows.length} טיסות בינלאומיות · ARR / DUR משוערים לפי מרחק גיאוגרפי · {config.simbrief.baseType} iniBuilds
+                Showing {rows.length} international flights · {config.simbrief.baseType} iniBuilds
               </div>
             </div>
           )}
         </section>
 
         <footer className="text-xs text-slate-600">
-          Free-tier friendly: השרת עושה cache לדקה · נתוני שדות ממסד OurAirports
+          Free-tier friendly: server caches 1 min · airport data from OurAirports
         </footer>
       </div>
     </main>
