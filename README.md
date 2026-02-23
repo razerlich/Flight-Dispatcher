@@ -1,35 +1,45 @@
 # Flight Dispatcher (Next.js + Tailwind)
 
-Web app קטנה: בוחר שדה תעופה (ICAO) → מקבל יציאות מהעכשיו והלאה + משך טיסה → קישור לפתיחה ב‑SimBrief.
+A small web app: pick a departure airport (ICAO) → get upcoming international departures with estimated flight time → open directly in SimBrief.
 
-## מה צריך
-- Node.js 18+ (מומלץ 20+)
-- מפתח RapidAPI ל‑AeroDataBox (Free tier)
+## Requirements
+- Node.js 18+ (20+ recommended)
+- RapidAPI key for AeroDataBox (Free tier)
 
-## התקנה
+## Setup
+
 ```bash
 npm install
 ```
 
-## הגדרת מפתח API
-1) שכפל את `.env.example` ל־`.env.local`
-2) שים שם את המפתח:
+Copy `.env.example` to `.env.local` and add your key:
 
 ```
 RAPIDAPI_KEY=xxxxxxxxxxxxxxxx
 ```
 
-## הרצה
+## Running
+
 ```bash
 npm run dev
 ```
 
-ואז:
-- פתח: http://localhost:3000
-- הזן ICAO (למשל `LLBG`) ולחץ "הבא יציאות מהעכשיו"
+Then open http://localhost:3000, enter an ICAO code (e.g. `LLBG`) and click the button.
 
-## הערות
-- כרגע הקלט מצפה ל‑ICAO (4 אותיות). אפשר להוסיף תמיכה ב‑IATA (3 אותיות) ע"י endpoint קטן שממפה IATA->ICAO.
-- זמן "Airport" יעבוד הכי טוב אם ה‑API מחזיר timezone לשדה. אם לא, נוכל להוסיף קריאה משלימה ל‑timezone.
+## Configuration
 
-Enjoy ✈️
+Edit `config.ts` to set your personal defaults:
+
+```ts
+simbrief: {
+  airframeId: "...",   // Internal ID of your saved SimBrief airframe
+  baseType:   "A359",  // ICAO aircraft type code
+},
+defaultAirport: "LLBG", // Pre-fills the ICAO input on first load
+```
+
+## Notes
+- Only ICAO codes (4 letters) are supported as input. IATA support (3 letters) can be added with a small resolver endpoint.
+- ARR and DUR are estimates based on great-circle distance at ~480 kt average speed.
+- Airport coordinate data is bundled from OurAirports (public domain).
+- The server caches flight data for 60 seconds to stay within the free API tier.
