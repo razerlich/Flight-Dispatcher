@@ -1,7 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import config from "@/config";
+import type { FlightMapProps } from "./components/FlightMap";
+
+const FlightMap = dynamic(() => import("./components/FlightMap"), { ssr: false });
+
+type SelectedFlight = Omit<FlightMapProps, "onClose">;
 
 type TimeMode = "local" | "airport" | "zulu";
 
@@ -20,35 +26,65 @@ function normalizeUtc(s: string | undefined): string | undefined {
   return t.endsWith("Z") ? t : t + "Z";
 }
 
-function fmtTime(dateISO: string, mode: TimeMode, airportTz?: string) {
+function fmtTime(dateISO: string, mode: TimeMode, airportTz?: string, useHour12 = true) {
   const d = new Date(dateISO);
   if (Number.isNaN(d.getTime())) return "—";
 
   if (mode === "zulu") {
-    return (
-      new Intl.DateTimeFormat(undefined, {
-        hour: "2-digit",
-        minute: "2-digit",
-        timeZone: "UTC",
-        hour12: false
-      }).format(d) + "Z"
-    );
+    const time = new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "UTC",
+      hour12: false
+    }).format(d);
+    return time + "Z";
   }
 
   if (mode === "airport" && airportTz) {
     return new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
       timeZone: airportTz,
-      hour12: false
+      hour12: useHour12
     }).format(d);
   }
 
   return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-    hour12: false
+    hour12: useHour12
   }).format(d);
+}
+
+function fmtDue(depISO: string, now: Date): { label: string; color: string } {
+  const dep = new Date(depISO);
+  const diffMins = Math.round((dep.getTime() - now.getTime()) / 60000);
+
+  if (diffMins < -60) return { label: "departed", color: "text-slate-600" };
+  if (diffMins < 0)   return { label: `${Math.abs(diffMins)}m ago`, color: "text-slate-500" };
+  if (diffMins < 30)  return { label: `in ${diffMins}m`, color: "text-red-400" };
+  if (diffMins < 90)  return { label: `in ${diffMins}m`, color: "text-yellow-400" };
+  const h = Math.floor(diffMins / 60);
+  const m = diffMins % 60;
+  return { label: `in ${h}h${m > 0 ? ` ${m}m` : ""}`, color: "text-slate-400" };
+}
+
+function dayNightIcon(dateISO: string, tz?: string): string {
+  const d = new Date(dateISO);
+  if (Number.isNaN(d.getTime())) return "";
+  const hourStr = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    hour12: false,
+    timeZone: tz ?? undefined
+  }).format(d);
+  const hour = parseInt(hourStr, 10) % 24;
+  return hour >= 6 && hour < 20 ? "☀️" : "🌙";
 }
 
 function minsToHMM(mins: number) {
@@ -175,9 +211,19 @@ export default function Page() {
   const [icao, setIcao] = useState("");
   const [queriedIcao, setQueriedIcao] = useState("");
   const [timeMode, setTimeMode] = useState<TimeMode>("local");
+  const [hour12, setHour12] = useState(true);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<FidsResponse | null>(null);
   const [airportMap, setAirportMap] = useState<Record<string, AirportRecord>>({});
+
+  const [now, setNow] = useState<Date | null>(null);
+  const [selectedFlight, setSelectedFlight] = useState<SelectedFlight | null>(null);
+
+  useEffect(() => {
+    setNow(new Date());
+    const timer = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const saved = localStorage.getItem("lastAirportIcao");
@@ -268,9 +314,8 @@ export default function Page() {
       });
   }, [data, airportMap, queriedIcao, originInfo]);
 
-  // Derive origin airport timezone from departure local time offset string
-  const displayTz = useMemo(() => {
-    if (timeMode !== "airport") return undefined;
+  // Derive origin airport timezone from departure local time offset string (always computed for sun/moon)
+  const originTz = useMemo(() => {
     const list = getList(data);
     const sample = list[0]?.departure?.scheduledTime?.local;
     if (sample) {
@@ -284,7 +329,9 @@ export default function Page() {
       }
     }
     return undefined;
-  }, [data, timeMode]);
+  }, [data]);
+
+  const displayTz = timeMode === "airport" ? originTz : undefined;
 
   const orig = queriedIcao || icao.trim().toUpperCase();
 
@@ -298,8 +345,9 @@ export default function Page() {
           </p>
         </header>
 
-        <section className="rounded-2xl bg-slate-900/60 p-4 shadow">
-          <div className="flex flex-col md:flex-row gap-3 md:items-end">
+        <section className="rounded-2xl bg-slate-900/60 p-4 shadow space-y-3">
+          {/* Row 1: input + search button */}
+          <div className="flex gap-3">
             <div className="flex-1">
               <label className="text-sm text-slate-300">Airport (ICAO)</label>
               <input
@@ -315,31 +363,53 @@ export default function Page() {
                 </div>
               )}
             </div>
+            <div className="flex flex-col shrink-0">
+              <span className="text-sm invisible select-none" aria-hidden="true">_</span>
+              <button
+                className="mt-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 px-4 py-3 font-medium disabled:opacity-60"
+                onClick={load}
+                disabled={loading}
+              >
+                {loading ? "Loading..." : "Get departures"}
+              </button>
+            </div>
+          </div>
 
-            <button
-              className="rounded-xl bg-indigo-600 hover:bg-indigo-500 px-4 py-3 font-medium disabled:opacity-60"
-              onClick={load}
-              disabled={loading}
+          {/* Row 2: time mode + 12h/24h toggle (aligned with input) */}
+          <div className="flex items-center gap-2">
+            {(["local", "airport", "zulu"] as TimeMode[]).map((m) => (
+              <button
+                key={m}
+                className={[
+                  "rounded-xl px-3 py-2 text-sm border transition",
+                  timeMode === m
+                    ? "bg-slate-100 text-slate-900 border-slate-100"
+                    : "border-slate-800 hover:bg-slate-900"
+                ].join(" ")}
+                onClick={() => setTimeMode(m)}
+                title={m === "local" ? "Local (device)" : m === "airport" ? "Airport time" : "Zulu (UTC)"}
+              >
+                {m === "local" ? "Local" : m === "airport" ? "Airport" : "Zulu"}
+              </button>
+            ))}
+
+            {/* Animated 12h/24h toggle — slides out when Zulu is active */}
+            <div
+              className="flex items-center gap-2 overflow-hidden transition-all duration-300 ease-in-out"
+              style={{
+                maxWidth: timeMode === "zulu" ? 0 : 120,
+                opacity: timeMode === "zulu" ? 0 : 1,
+              }}
             >
-              {loading ? "Loading..." : "Get departures"}
-            </button>
-
-            <div className="flex gap-2">
-              {(["local", "airport", "zulu"] as TimeMode[]).map((m) => (
-                <button
-                  key={m}
-                  className={[
-                    "rounded-xl px-3 py-3 border transition",
-                    timeMode === m
-                      ? "bg-slate-100 text-slate-900 border-slate-100"
-                      : "border-slate-800 hover:bg-slate-900"
-                  ].join(" ")}
-                  onClick={() => setTimeMode(m)}
-                  title={m === "local" ? "Local (device)" : m === "airport" ? "Airport time" : "Zulu (UTC)"}
-                >
-                  {m === "local" ? "Local" : m === "airport" ? "Airport" : "Zulu"}
-                </button>
-              ))}
+              <div className="w-px h-5 bg-slate-700 shrink-0" />
+              <button
+                className="rounded-xl px-3 py-2 text-sm border border-slate-800 hover:bg-slate-900 font-mono transition whitespace-nowrap"
+                onClick={() => setHour12((v) => !v)}
+                title="Toggle 12h / 24h format"
+                tabIndex={timeMode === "zulu" ? -1 : 0}
+              >
+                {hour12 ? "12h" : "24h"}
+              </button>
             </div>
           </div>
         </section>
@@ -383,48 +453,103 @@ export default function Page() {
 
                     const arrTz = timeMode === "airport" ? (r.destTz ?? undefined) : undefined;
 
+                    const destInfo = airportMap[r.dest];
+                    const canMap = !!(originInfo && destInfo);
+                    const isSelected = selectedFlight?.destIcao === r.dest && selectedFlight?.flightNumber === r.number;
+
                     return (
-                      <tr key={i} className="border-b border-slate-800/60 hover:bg-slate-900/30">
-                        <td className="py-2 pr-4 whitespace-nowrap">
-                          <span className="font-mono">{r.number ?? "—"}</span>
-                          {r.airlineName && (
-                            <div className="text-xs text-slate-400 mt-0.5">{r.airlineName}</div>
-                          )}
-                        </td>
-                        <td className="py-2 pr-4">
-                          <span className="font-mono">{r.dest}</span>
-                          {(r.destCity || r.destCountry) && (
-                            <div className="text-xs text-slate-400 mt-0.5">
-                              {[r.destCity, r.destCountry ? countryName(r.destCountry) : undefined]
-                                .filter(Boolean)
-                                .join(", ")}
-                            </div>
-                          )}
-                        </td>
-                        <td className="py-2 pr-4 whitespace-nowrap">
-                          {r.dep ? fmtTime(r.dep, timeMode, displayTz) : "—"}
-                        </td>
-                        <td className="py-2 pr-4 whitespace-nowrap">
-                          {arrISO
-                            ? (isEstimate ? "~" : "") + fmtTime(arrISO, timeMode, arrTz)
-                            : "—"}
-                        </td>
-                        <td className="py-2 pr-4 whitespace-nowrap">
-                          {durMins
-                            ? (isEstimate ? "~" : "") + minsToHMM(durMins)
-                            : "—"}
-                        </td>
-                        <td className="py-2 pr-3 whitespace-nowrap">
-                          <a
-                            className="text-indigo-300 hover:text-indigo-200"
-                            href={simbriefLink(orig, r.dest, r.dep, durMins, r.airlineIcao, r.number)}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            SimBrief →
-                          </a>
-                        </td>
-                      </tr>
+                      <Fragment key={i}>
+                        <tr
+                          className={[
+                            "border-b transition-colors",
+                            isSelected ? "border-indigo-800/60" : "border-slate-800/60",
+                            canMap ? "cursor-pointer hover:bg-slate-900/40" : "",
+                            isSelected ? "bg-indigo-950/40" : "",
+                          ].join(" ")}
+                          onClick={() => {
+                            if (!canMap) return;
+                            if (isSelected) { setSelectedFlight(null); return; }
+                            setSelectedFlight({
+                              originLat: originInfo!.lat,
+                              originLon: originInfo!.lon,
+                              originIcao: queriedIcao,
+                              originCity: originInfo!.city,
+                              destLat: destInfo.lat,
+                              destLon: destInfo.lon,
+                              destIcao: r.dest,
+                              destCity: r.destCity,
+                              flightNumber: r.number,
+                            });
+                          }}
+                        >
+                          <td className="py-2 pr-4 whitespace-nowrap">
+                            <span className="font-mono">{r.number ?? "—"}</span>
+                            {r.airlineName && (
+                              <div className="text-xs text-slate-400 mt-0.5">{r.airlineName}</div>
+                            )}
+                          </td>
+                          <td className="py-2 pr-4">
+                            <span className="font-mono">{r.dest}</span>
+                            {(r.destCity || r.destCountry) && (
+                              <div className="text-xs text-slate-400 mt-0.5">
+                                {[r.destCity, r.destCountry ? countryName(r.destCountry) : undefined]
+                                  .filter(Boolean)
+                                  .join(", ")}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-2 pr-4 whitespace-nowrap">
+                            {r.dep ? (
+                              <div>
+                                <span>
+                                  <span className="mr-1">{dayNightIcon(r.dep, originTz)}</span>
+                                  {fmtTime(r.dep, timeMode, displayTz, hour12)}
+                                </span>
+                                {now && (() => {
+                                  const due = fmtDue(r.dep, now);
+                                  return (
+                                    <div className={`text-xs mt-0.5 ${due.color}`}>{due.label}</div>
+                                  );
+                                })()}
+                              </div>
+                            ) : "—"}
+                          </td>
+                          <td className="py-2 pr-4 whitespace-nowrap">
+                            {arrISO ? (
+                              <span>
+                                <span className="mr-1">{dayNightIcon(arrISO, r.destTz ?? undefined)}</span>
+                                {(isEstimate ? "~" : "") + fmtTime(arrISO, timeMode, arrTz, hour12)}
+                              </span>
+                            ) : "—"}
+                          </td>
+                          <td className="py-2 pr-4 whitespace-nowrap">
+                            {durMins
+                              ? (isEstimate ? "~" : "") + minsToHMM(durMins)
+                              : "—"}
+                          </td>
+                          <td className="py-2 pr-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                            <a
+                              className="text-indigo-300 hover:text-indigo-200"
+                              href={simbriefLink(orig, r.dest, r.dep, durMins, r.airlineIcao, r.number)}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              SimBrief →
+                            </a>
+                          </td>
+                        </tr>
+
+                        {isSelected && selectedFlight && (
+                          <tr className="border-b border-indigo-800/40 bg-slate-950/60">
+                            <td colSpan={6} className="p-0">
+                              <FlightMap
+                                {...selectedFlight}
+                                onClose={() => setSelectedFlight(null)}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -432,13 +557,14 @@ export default function Page() {
 
               <div className="mt-2 text-xs text-slate-500">
                 Showing {rows.length} international flights · {config.simbrief.baseType} iniBuilds
+                {" · "}Click a row to show the flight path
               </div>
             </div>
           )}
         </section>
 
-        <footer className="text-xs text-slate-600">
-          Free-tier friendly: server caches 1 min · airport data from OurAirports
+        <footer className="text-xs text-slate-600 text-center pt-2">
+          © {new Date().getFullYear()} Raz Erlich. All rights reserved.
         </footer>
       </div>
     </main>
