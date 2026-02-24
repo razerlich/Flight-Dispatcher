@@ -102,6 +102,32 @@ export default function SettingsPanel({ open, settings, onSave, onClose }: Props
     onSave({ ...settings, aircraft, activeAircraftIndex });
   }
 
+  function exportSettings() {
+    const blob = new Blob([JSON.stringify(settings, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "flight-dispatcher-settings.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function importSettings(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target?.result as string);
+        if (parsed && typeof parsed === "object") onSave(parsed);
+      } catch {
+        alert("Invalid settings file.");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ""; // reset so same file can be re-imported
+  }
+
   return (
     <>
       {/* Backdrop */}
@@ -249,6 +275,26 @@ export default function SettingsPanel({ open, settings, onSave, onClose }: Props
                   </div>
                 );
               })}
+            </div>
+          </section>
+
+          {/* Export / Import */}
+          <section className="space-y-2">
+            <h3 className="text-xs font-semibold uppercase tracking-widest text-slate-500">Backup & Restore</h3>
+            <p className="text-xs text-slate-500">
+              Export your settings to a file so they survive cache clears. Import to restore them.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={exportSettings}
+                className="flex-1 rounded-xl border border-slate-700 hover:bg-slate-800 px-3 py-2 text-sm text-slate-300 transition"
+              >
+                ↓ Export
+              </button>
+              <label className="flex-1 rounded-xl border border-slate-700 hover:bg-slate-800 px-3 py-2 text-sm text-slate-300 transition text-center cursor-pointer">
+                ↑ Import
+                <input type="file" accept=".json" className="hidden" onChange={importSettings} />
+              </label>
             </div>
           </section>
 
