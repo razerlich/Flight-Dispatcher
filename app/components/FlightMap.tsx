@@ -4,44 +4,7 @@ import { useEffect } from "react";
 import { MapContainer, TileLayer, Marker, Polyline, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-
-// ── Great-circle interpolation ────────────────────────────────────────────────
-function greatCirclePoints(
-  lat1: number, lon1: number,
-  lat2: number, lon2: number,
-  n = 80
-): [number, number][] {
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const toDeg = (r: number) => (r * 180) / Math.PI;
-
-  const φ1 = toRad(lat1), λ1 = toRad(lon1);
-  const φ2 = toRad(lat2), λ2 = toRad(lon2);
-
-  // Cartesian
-  const x1 = Math.cos(φ1) * Math.cos(λ1);
-  const y1 = Math.cos(φ1) * Math.sin(λ1);
-  const z1 = Math.sin(φ1);
-  const x2 = Math.cos(φ2) * Math.cos(λ2);
-  const y2 = Math.cos(φ2) * Math.sin(λ2);
-  const z2 = Math.sin(φ2);
-
-  const dot = x1 * x2 + y1 * y2 + z1 * z2;
-  const d = Math.acos(Math.max(-1, Math.min(1, dot))); // angular distance
-
-  if (d < 1e-6) return [[lat1, lon1]]; // same point
-
-  const pts: [number, number][] = [];
-  for (let i = 0; i <= n; i++) {
-    const t = i / n;
-    const A = Math.sin((1 - t) * d) / Math.sin(d);
-    const B = Math.sin(t * d) / Math.sin(d);
-    const x = A * x1 + B * x2;
-    const y = A * y1 + B * y2;
-    const z = A * z1 + B * z2;
-    pts.push([toDeg(Math.atan2(z, Math.sqrt(x * x + y * y))), toDeg(Math.atan2(y, x))]);
-  }
-  return pts;
-}
+import { greatCirclePoints } from "@/app/lib/geo";
 
 // ── Auto-fit map to both markers ──────────────────────────────────────────────
 function FitBounds({ points }: { points: [number, number][] }) {

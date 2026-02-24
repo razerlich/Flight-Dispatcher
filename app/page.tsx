@@ -7,6 +7,7 @@ import SettingsPanel from "@/app/components/SettingsPanel";
 import type { FlightMapProps } from "./components/FlightMap";
 
 const FlightMap = dynamic(() => import("./components/FlightMap"), { ssr: false });
+const RouteMap  = dynamic(() => import("./components/RouteMap"),  { ssr: false });
 
 type SelectedFlight = Omit<FlightMapProps, "onClose">;
 
@@ -240,6 +241,8 @@ export default function Page() {
 
   const [now, setNow] = useState<Date | null>(null);
   const [selectedFlight, setSelectedFlight] = useState<SelectedFlight | null>(null);
+  const [showRouteMap, setShowRouteMap] = useState(false);
+  const [highlightedDest, setHighlightedDest] = useState<string | null>(null);
   const [vatsimAtc, setVatsimAtc] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
@@ -369,7 +372,33 @@ export default function Page() {
 
   const displayTz = timeMode === "airport" ? originTz : undefined;
 
+  // Group rows by destination for the route map
+  const routeDestinations = useMemo(() => {
+    if (!originInfo) return [];
+    const map = new Map<string, { lat: number; lon: number; icao: string; city?: string; flights: string[]; firstRowIndex: number }>();
+    for (let idx = 0; idx < rows.length; idx++) {
+      const r = rows[idx];
+      const info = airportMap[r.dest];
+      if (!info) continue;
+      if (!map.has(r.dest)) {
+        map.set(r.dest, { lat: info.lat, lon: info.lon, icao: r.dest, city: r.destCity, flights: [], firstRowIndex: idx });
+      }
+      if (r.number) map.get(r.dest)!.flights.push(r.number);
+    }
+    return Array.from(map.values());
+  }, [rows, airportMap, originInfo]);
+
   const orig = queriedIcao || icao.trim().toUpperCase();
+
+  function handleDestClick(icao: string) {
+    setHighlightedDest(icao);
+    const dest = routeDestinations.find((d) => d.icao === icao);
+    if (dest == null) return;
+    setTimeout(() => {
+      document.getElementById(`flight-row-${dest.firstRowIndex}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 50);
+  }
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 p-6">
@@ -460,7 +489,7 @@ export default function Page() {
             </div>
           </div>
 
-          {/* Row 3: aircraft selector */}
+          {/* Row 3: aircraft selector + route map toggle */}
           {settings.aircraft.length > 0 && (
             <div className="flex items-center gap-2">
               <span className="text-sm text-slate-400">Aircraft</span>
@@ -478,9 +507,38 @@ export default function Page() {
                   </option>
                 ))}
               </select>
+
+              {routeDestinations.length > 0 && (
+                <button
+                  onClick={() => setShowRouteMap((v) => !v)}
+                  title="Toggle route map"
+                  className={[
+                    "px-3 py-2 rounded-xl text-sm border transition",
+                    showRouteMap
+                      ? "bg-indigo-600 border-indigo-600 text-white"
+                      : "border-slate-800 text-slate-400 hover:bg-slate-900",
+                  ].join(" ")}
+                >
+                  🗺
+                </button>
+              )}
             </div>
           )}
         </section>
+
+        {showRouteMap && originInfo && routeDestinations.length > 0 && (
+          <section>
+            <RouteMap
+              originLat={originInfo.lat}
+              originLon={originInfo.lon}
+              originIcao={queriedIcao}
+              originCity={originInfo.city}
+              destinations={routeDestinations}
+              onDestinationClick={handleDestClick}
+              vatsimAtc={vatsimAtc}
+            />
+          </section>
+        )}
 
         <section className="rounded-2xl bg-slate-900/40 p-4 shadow">
           {!data && !loading && (
@@ -525,14 +583,18 @@ export default function Page() {
                     const canMap = !!(originInfo && destInfo);
                     const isSelected = selectedFlight?.destIcao === r.dest && selectedFlight?.flightNumber === r.number;
 
+                    const isHighlighted = highlightedDest === r.dest;
+
                     return (
                       <Fragment key={i}>
                         <tr
+                          id={`flight-row-${i}`}
                           className={[
                             "border-b transition-colors",
                             isSelected ? "border-indigo-800/60" : "border-slate-800/60",
                             canMap ? "cursor-pointer hover:bg-slate-900/40" : "",
                             isSelected ? "bg-indigo-950/40" : "",
+                            isHighlighted && !isSelected ? "bg-amber-950/30 border-amber-800/40" : "",
                           ].join(" ")}
                           onClick={() => {
                             if (!canMap) return;
