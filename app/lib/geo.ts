@@ -1,3 +1,38 @@
+/**
+ * Split a polyline into segments wherever it crosses the antimeridian (±180°).
+ * This prevents Leaflet from drawing a horizontal line across the entire map.
+ */
+export function splitAtAntimeridian(pts: [number, number][]): [number, number][][] {
+  if (pts.length < 2) return [pts];
+
+  const segments: [number, number][][] = [];
+  let seg: [number, number][] = [pts[0]];
+
+  for (let i = 1; i < pts.length; i++) {
+    const [lat2, lon2] = pts[i];
+    const [lat1, lon1] = seg[seg.length - 1];
+    const diff = lon2 - lon1;
+
+    if (Math.abs(diff) > 180) {
+      // Normalise to the "short" crossing direction
+      const shortDiff = diff > 180 ? diff - 360 : diff + 360;
+      const exitLon  = shortDiff < 0 ? -180 :  180;
+      const enterLon = shortDiff < 0 ?  180 : -180;
+      const t = Math.abs(exitLon - lon1) / Math.abs(shortDiff);
+      const crossLat = lat1 + t * (lat2 - lat1);
+
+      seg.push([crossLat, exitLon]);
+      segments.push(seg);
+      seg = [[crossLat, enterLon], [lat2, lon2]];
+    } else {
+      seg.push([lat2, lon2]);
+    }
+  }
+
+  segments.push(seg);
+  return segments;
+}
+
 export function greatCirclePoints(
   lat1: number, lon1: number,
   lat2: number, lon2: number,

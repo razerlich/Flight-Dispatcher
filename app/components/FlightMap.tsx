@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { MapContainer, TileLayer, Marker, Polyline, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { greatCirclePoints } from "@/app/lib/geo";
+import { greatCirclePoints, splitAtAntimeridian } from "@/app/lib/geo";
 
 // ── Auto-fit map to both markers ──────────────────────────────────────────────
 function FitBounds({ points }: { points: [number, number][] }) {
@@ -112,11 +112,14 @@ export default function FlightMap({
             </Popup>
           </Marker>
 
-          {/* Great-circle arc */}
-          <Polyline
-            positions={arc}
-            pathOptions={{ color: "#6366f1", weight: 2.5, dashArray: "8 5", opacity: 0.85 }}
-          />
+          {/* Great-circle arc — split at antimeridian to avoid the "loop" bug */}
+          {splitAtAntimeridian(arc).map((seg, i) => (
+            <Polyline
+              key={i}
+              positions={seg}
+              pathOptions={{ color: "#6366f1", weight: 2.5, dashArray: "8 5", opacity: 0.85 }}
+            />
+          ))}
 
           <FitBounds points={fitPoints} />
         </MapContainer>

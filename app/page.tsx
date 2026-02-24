@@ -519,7 +519,7 @@ export default function Page() {
                       : "border-slate-800 text-slate-400 hover:bg-slate-900",
                   ].join(" ")}
                 >
-                  🗺
+                  🗺 Route Map
                 </button>
               )}
             </div>
