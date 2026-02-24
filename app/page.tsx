@@ -2,7 +2,8 @@
 
 import { Fragment, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import config from "@/config";
+import { useUserSettings } from "@/app/hooks/useUserSettings";
+import SettingsPanel from "@/app/components/SettingsPanel";
 import type { FlightMapProps } from "./components/FlightMap";
 
 const FlightMap = dynamic(() => import("./components/FlightMap"), { ssr: false });
@@ -137,7 +138,9 @@ function simbriefLink(
   depISO?: string,
   mins?: number | null,
   airlineIcao?: string,
-  flightNumber?: string
+  flightNumber?: string,
+  baseType?: string,
+  airframeId?: string,
 ) {
   const u = new URL("https://dispatch.simbrief.com/options/custom");
 
@@ -151,8 +154,8 @@ function simbriefLink(
     if (digits) u.searchParams.set("fltnum", digits);
   }
 
-  u.searchParams.set("basetype", config.simbrief.baseType);
-  u.searchParams.set("type", config.simbrief.airframeId);
+  if (baseType)   u.searchParams.set("basetype", baseType);
+  if (airframeId) u.searchParams.set("type", airframeId);
 
   if (depISO) {
     u.searchParams.set("date", fmtSimbriefDate(depISO));
@@ -207,7 +210,26 @@ function getList(data: FidsResponse | null): FlightEntry[] {
   return rawDeps.items ?? data?.departing ?? [];
 }
 
+function VatsimBadges({ positions }: { positions?: string[] }) {
+  if (!positions?.length) return null;
+  return (
+    <span className="inline-flex gap-1 flex-wrap">
+      {positions.map((p) => (
+        <span
+          key={p}
+          className="text-[10px] px-1 py-px rounded font-mono bg-green-950 text-green-400 border border-green-800/50"
+        >
+          {p}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 export default function Page() {
+  const { settings, save, activeAircraft } = useUserSettings();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
   const [icao, setIcao] = useState("");
   const [queriedIcao, setQueriedIcao] = useState("");
   const [timeMode, setTimeMode] = useState<TimeMode>("local");
@@ -218,6 +240,7 @@ export default function Page() {
 
   const [now, setNow] = useState<Date | null>(null);
   const [selectedFlight, setSelectedFlight] = useState<SelectedFlight | null>(null);
+  const [vatsimAtc, setVatsimAtc] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
     setNow(new Date());
@@ -226,9 +249,22 @@ export default function Page() {
   }, []);
 
   useEffect(() => {
-    const saved = localStorage.getItem("lastAirportIcao");
-    setIcao(saved ?? config.defaultAirport);
+    async function fetchVatsim() {
+      try {
+        const res = await fetch("/api/vatsim");
+        if (res.ok) setVatsimAtc(await res.json());
+      } catch { /* silent */ }
+    }
+    fetchVatsim();
+    const timer = setInterval(fetchVatsim, 120000); // refresh every 2 min
+    return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("lastAirportIcao");
+    setIcao(saved ?? settings.defaultAirport);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.defaultAirport]);
 
   async function load() {
     const v = icao.trim().toUpperCase();
@@ -338,11 +374,21 @@ export default function Page() {
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 p-6">
       <div className="max-w-6xl mx-auto space-y-4">
-        <header className="space-y-1">
-          <h1 className="text-2xl font-semibold">Flight Dispatcher</h1>
-          <p className="text-slate-400 text-sm">
-            Pick an airport → get upcoming international departures → open in SimBrief with {config.simbrief.baseType}
-          </p>
+        <header className="flex items-start justify-between">
+          <div className="space-y-1">
+            <h1 className="text-2xl font-semibold">Flight Dispatcher</h1>
+            <p className="text-slate-400 text-sm">
+              Pick an airport → get upcoming international departures → open in SimBrief
+              {activeAircraft?.name ? ` with ${activeAircraft.name}` : ""}
+            </p>
+          </div>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="text-slate-400 hover:text-slate-100 transition text-xl mt-1 px-1"
+            title="Settings"
+          >
+            ⚙
+          </button>
         </header>
 
         <section className="rounded-2xl bg-slate-900/60 p-4 shadow space-y-3">
@@ -358,8 +404,9 @@ export default function Page() {
                 onKeyDown={(e) => e.key === "Enter" && load()}
               />
               {originInfo && (
-                <div className="text-xs text-slate-400 mt-1">
-                  {originInfo.name} — {originInfo.city}, {countryName(originInfo.country)}
+                <div className="text-xs text-slate-400 mt-1 flex items-center gap-2 flex-wrap">
+                  <span>{originInfo.name} — {originInfo.city}, {countryName(originInfo.country)}</span>
+                  <VatsimBadges positions={vatsimAtc[queriedIcao]} />
                 </div>
               )}
             </div>
@@ -412,6 +459,27 @@ export default function Page() {
               </button>
             </div>
           </div>
+
+          {/* Row 3: aircraft selector */}
+          {settings.aircraft.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-slate-400">Aircraft</span>
+              <select
+                className="bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-2 text-sm outline-none text-slate-100"
+                value={settings.activeAircraftIndex}
+                onChange={(e) =>
+                  save({ ...settings, activeAircraftIndex: Number(e.target.value) })
+                }
+              >
+                {settings.aircraft.map((ac, i) => (
+                  <option key={i} value={i}>
+                    {ac.name || `Aircraft ${i + 1}`}
+                    {ac.baseType ? ` (${ac.baseType})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </section>
 
         <section className="rounded-2xl bg-slate-900/40 p-4 shadow">
@@ -497,6 +565,11 @@ export default function Page() {
                                   .join(", ")}
                               </div>
                             )}
+                            {vatsimAtc[r.dest] && (
+                              <div className="mt-0.5">
+                                <VatsimBadges positions={vatsimAtc[r.dest]} />
+                              </div>
+                            )}
                           </td>
                           <td className="py-2 pr-4 whitespace-nowrap">
                             {r.dep ? (
@@ -530,7 +603,7 @@ export default function Page() {
                           <td className="py-2 pr-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                             <a
                               className="text-indigo-300 hover:text-indigo-200"
-                              href={simbriefLink(orig, r.dest, r.dep, durMins, r.airlineIcao, r.number)}
+                              href={simbriefLink(orig, r.dest, r.dep, durMins, r.airlineIcao, r.number, activeAircraft?.baseType, activeAircraft?.airframeId)}
                               target="_blank"
                               rel="noreferrer"
                             >
@@ -556,7 +629,8 @@ export default function Page() {
               </table>
 
               <div className="mt-2 text-xs text-slate-500">
-                Showing {rows.length} international flights · {config.simbrief.baseType} iniBuilds
+                Showing {rows.length} international flights
+                {activeAircraft?.name ? ` · ${activeAircraft.name}` : ""}
                 {" · "}Click a row to show the flight path
               </div>
             </div>
@@ -567,6 +641,13 @@ export default function Page() {
           © {new Date().getFullYear()} Raz Erlich. All rights reserved.
         </footer>
       </div>
+
+      <SettingsPanel
+        open={settingsOpen}
+        settings={settings}
+        onSave={save}
+        onClose={() => setSettingsOpen(false)}
+      />
     </main>
   );
 }
