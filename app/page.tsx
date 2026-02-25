@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import Image from "next/image";
 import dynamic from "next/dynamic";
 import { useUserSettings } from "@/app/hooks/useUserSettings";
@@ -78,16 +78,18 @@ function fmtDue(depISO: string, now: Date): { label: string; color: string } {
   return { label: `in ${h}h${m > 0 ? ` ${m}m` : ""}`, color: "text-slate-400" };
 }
 
-function dayNightIcon(dateISO: string, tz?: string): string {
+function dayNightIcon(dateISO: string, tz?: string): ReactNode {
   const d = new Date(dateISO);
-  if (Number.isNaN(d.getTime())) return "";
+  if (Number.isNaN(d.getTime())) return null;
   const hourStr = new Intl.DateTimeFormat("en-US", {
     hour: "numeric",
     hour12: false,
     timeZone: tz ?? undefined
   }).format(d);
   const hour = parseInt(hourStr, 10) % 24;
-  return hour >= 6 && hour < 20 ? "☀️" : "🌙";
+  return hour >= 6 && hour < 20
+    ? <span className="text-yellow-400">☀</span>
+    : <span>🌑</span>;
 }
 
 function minsToHMM(mins: number) {
@@ -245,6 +247,8 @@ export default function Page() {
   const [showRouteMap, setShowRouteMap] = useState(false);
   const [highlightedDest, setHighlightedDest] = useState<string | null>(null);
   const [vatsimAtc, setVatsimAtc] = useState<Record<string, string[]>>({});
+  const [recentAirports, setRecentAirports] = useState<string[]>([]);
+  const [showRecents, setShowRecents] = useState(false);
 
   useEffect(() => {
     setNow(new Date());
@@ -265,17 +269,27 @@ export default function Page() {
   }, []);
 
   useEffect(() => {
-    const saved = localStorage.getItem("lastAirportIcao");
-    setIcao(saved ?? settings.defaultAirport);
+    setIcao(settings.defaultAirport);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.defaultAirport]);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("recentAirports") ?? "[]");
+      if (Array.isArray(saved)) setRecentAirports(saved);
+    } catch { /* ignore */ }
+  }, []);
 
   async function load() {
     const v = icao.trim().toUpperCase();
     if (!v) return;
 
-    localStorage.setItem("lastAirportIcao", v);
     setQueriedIcao(v);
+    setRecentAirports(prev => {
+      const updated = [v, ...prev.filter(r => r !== v)].slice(0, 6);
+      try { localStorage.setItem("recentAirports", JSON.stringify(updated)); } catch { /* ignore */ }
+      return updated;
+    });
     setLoading(true);
     setData(null);
     setAirportMap({});
@@ -427,7 +441,7 @@ export default function Page() {
         <section className="rounded-2xl bg-slate-900/60 p-4 shadow space-y-3">
           {/* Row 1: input + search button */}
           <div className="flex gap-3">
-            <div className="flex-1">
+            <div className="flex-1 relative">
               <label className="text-sm text-slate-300">Airport (ICAO)</label>
               <input
                 className="mt-1 w-full rounded-xl bg-slate-950/70 border border-slate-800 p-3 outline-none"
@@ -435,7 +449,22 @@ export default function Page() {
                 value={icao}
                 onChange={(e) => setIcao(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && load()}
+                onFocus={() => setShowRecents(true)}
+                onBlur={() => setTimeout(() => setShowRecents(false), 150)}
               />
+              {showRecents && recentAirports.length > 0 && (
+                <div className="absolute top-full left-0 right-0 z-10 mt-1 rounded-xl bg-slate-900 border border-slate-800 shadow-xl overflow-hidden">
+                  {recentAirports.map(ap => (
+                    <button
+                      key={ap}
+                      className="w-full text-left px-4 py-2 text-sm font-mono text-slate-300 hover:bg-slate-800 transition-colors"
+                      onMouseDown={(e) => { e.preventDefault(); setIcao(ap); setShowRecents(false); }}
+                    >
+                      {ap}
+                    </button>
+                  ))}
+                </div>
+              )}
               {originInfo && (
                 <div className="text-xs text-slate-400 mt-1 flex items-center gap-2 flex-wrap">
                   <span>{originInfo.name} — {originInfo.city}, {countryName(originInfo.country)}</span>
@@ -446,7 +475,7 @@ export default function Page() {
             <div className="flex flex-col shrink-0">
               <span className="text-sm invisible select-none" aria-hidden="true">_</span>
               <button
-                className="mt-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 px-4 py-3 font-medium disabled:opacity-60"
+                className="mt-2 rounded-xl bg-sky-700 hover:bg-sky-600 px-4 py-3 font-medium disabled:opacity-60"
                 onClick={load}
                 disabled={loading}
               >
@@ -475,10 +504,10 @@ export default function Page() {
 
             {/* Animated 12h/24h toggle — slides out when Zulu is active */}
             <div
-              className="flex items-center gap-2 overflow-hidden transition-all duration-300 ease-in-out"
+              className="flex items-center gap-2 transition-opacity duration-300 ease-in-out"
               style={{
-                maxWidth: timeMode === "zulu" ? 0 : 120,
                 opacity: timeMode === "zulu" ? 0 : 1,
+                pointerEvents: timeMode === "zulu" ? "none" : "auto",
               }}
             >
               <div className="w-px h-5 bg-slate-700 shrink-0" />
@@ -519,7 +548,7 @@ export default function Page() {
                   className={[
                     "px-3 py-2 rounded-xl text-sm border transition",
                     showRouteMap
-                      ? "bg-indigo-600 border-indigo-600 text-white"
+                      ? "bg-sky-700 border-sky-700 text-white"
                       : "border-slate-800 text-slate-400 hover:bg-slate-900",
                   ].join(" ")}
                 >
@@ -562,8 +591,8 @@ export default function Page() {
                   <tr className="border-b border-slate-800">
                     <th className="text-left py-2 pr-4">FLIGHT</th>
                     <th className="text-left py-2 pr-4">DEST</th>
-                    <th className="text-left py-2 pr-4">DEP</th>
-                    <th className="text-left py-2 pr-4">ARR</th>
+                    <th className="text-left py-2 pr-4 min-w-[11rem]">DEP</th>
+                    <th className="text-left py-2 pr-4 min-w-[11rem]">ARR</th>
                     <th className="text-left py-2 pr-4">DUR</th>
                     <th className="text-left py-2 pr-3"></th>
                   </tr>
@@ -595,9 +624,9 @@ export default function Page() {
                           id={`flight-row-${i}`}
                           className={[
                             "border-b transition-colors",
-                            isSelected ? "border-indigo-800/60" : "border-slate-800/60",
+                            isSelected ? "border-sky-800/60" : "border-slate-800/60",
                             canMap ? "cursor-pointer hover:bg-slate-900/40" : "",
-                            isSelected ? "bg-indigo-950/40" : "",
+                            isSelected ? "bg-sky-950/40" : "",
                             isHighlighted && !isSelected ? "bg-amber-950/30 border-amber-800/40" : "",
                           ].join(" ")}
                           onClick={() => {
@@ -668,7 +697,7 @@ export default function Page() {
                           </td>
                           <td className="py-2 pr-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                             <a
-                              className="text-indigo-300 hover:text-indigo-200"
+                              className="text-sky-300 hover:text-sky-200"
                               href={simbriefLink(orig, r.dest, r.dep, durMins, r.airlineIcao, r.number, activeAircraft?.baseType, activeAircraft?.airframeId)}
                               target="_blank"
                               rel="noreferrer"
@@ -679,7 +708,7 @@ export default function Page() {
                         </tr>
 
                         {isSelected && selectedFlight && (
-                          <tr className="border-b border-indigo-800/40 bg-slate-950/60">
+                          <tr className="border-b border-sky-800/40 bg-slate-950/60">
                             <td colSpan={6} className="p-0">
                               <FlightMap
                                 {...selectedFlight}

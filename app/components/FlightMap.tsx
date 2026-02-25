@@ -34,7 +34,7 @@ function dotIcon(color: string) {
   });
 }
 
-const originIcon = dotIcon("#6366f1"); // indigo
+const originIcon = dotIcon("#0ea5e9"); // sky
 const destIcon   = dotIcon("#ef4444"); // red
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -62,11 +62,11 @@ export default function FlightMap({
   const fitPoints: [number, number][] = [[originLat, originLon], [destLat, destLon]];
 
   return (
-    <div className="overflow-hidden border-t border-indigo-900/60">
+    <div className="overflow-hidden border-t border-sky-900/60">
       {/* Header */}
       <div className="flex items-center justify-between bg-slate-900 px-4 py-2">
         <span className="font-mono text-sm text-slate-200">
-          <span className="text-indigo-400">{originIcao}</span>
+          <span className="text-sky-400">{originIcao}</span>
           {" → "}
           <span className="text-red-400">{destIcao}</span>
           {flightNumber && (
@@ -117,7 +117,7 @@ export default function FlightMap({
             <Polyline
               key={i}
               positions={seg}
-              pathOptions={{ color: "#6366f1", weight: 2.5, dashArray: "8 5", opacity: 0.85 }}
+              pathOptions={{ color: "#0ea5e9", weight: 2.5, dashArray: "8 5", opacity: 0.85 }}
             />
           ))}
 

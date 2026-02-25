@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { Aircraft, UserSettings } from "@/app/hooks/useUserSettings";
 
 const AIRCRAFT_TYPES: { group: string; types: { code: string; name: string }[] }[] = [
@@ -80,6 +81,14 @@ type Props = {
 };
 
 export default function SettingsPanel({ open, settings, onSave, onClose }: Props) {
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+
+  function copyAirframeId(id: string, index: number) {
+    navigator.clipboard.writeText(id).then(() => {
+      setCopiedIndex(index);
+      setTimeout(() => setCopiedIndex(null), 1500);
+    });
+  }
 
   function updateAircraft(index: number, field: keyof Aircraft, value: string) {
     const aircraft = settings.aircraft.map((ac, i) =>
@@ -202,7 +211,7 @@ export default function SettingsPanel({ open, settings, onSave, onClose }: Props
                     className={[
                       "rounded-xl border p-4 space-y-3 transition-colors",
                       isActive
-                        ? "border-indigo-600/60 bg-indigo-950/30"
+                        ? "border-sky-600/60 bg-sky-950/30"
                         : "border-slate-800 bg-slate-950/30",
                     ].join(" ")}
                   >
@@ -214,7 +223,7 @@ export default function SettingsPanel({ open, settings, onSave, onClose }: Props
                         className={[
                           "w-4 h-4 rounded-full border-2 shrink-0 transition-colors",
                           isActive
-                            ? "border-indigo-400 bg-indigo-400"
+                            ? "border-sky-400 bg-sky-400"
                             : "border-slate-600 hover:border-slate-400",
                         ].join(" ")}
                       />
@@ -234,13 +243,13 @@ export default function SettingsPanel({ open, settings, onSave, onClose }: Props
                     </div>
 
                     {/* Type + Airframe ID */}
-                    <div className="flex gap-4 pl-7">
-                      <div className="w-44 space-y-1">
+                    <div className="pl-7 space-y-3">
+                      <div className="space-y-1">
                         <label className="text-[10px] uppercase tracking-widest text-slate-500">
                           Aircraft Type
                         </label>
                         <select
-                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-sm outline-none font-mono transition-colors focus:border-slate-400"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-sm outline-none font-mono transition-colors focus:border-slate-400"
                           value={ac.baseType}
                           onChange={(e) => updateAircraft(i, "baseType", e.target.value)}
                         >
@@ -256,21 +265,42 @@ export default function SettingsPanel({ open, settings, onSave, onClose }: Props
                           ))}
                         </select>
                       </div>
-                      <div className="flex-1 space-y-1">
-                        <label className="text-[10px] uppercase tracking-widest text-slate-500">
-                          SimBrief Airframe ID
-                        </label>
-                        <input
-                          className="w-full bg-transparent border-b border-slate-700 focus:border-slate-400 outline-none font-mono text-xs py-0.5 transition-colors"
-                          placeholder="optional — leave blank to skip"
-                          value={ac.airframeId}
-                          onChange={(e) => updateAircraft(i, "airframeId", e.target.value)}
-                        />
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] uppercase tracking-widest text-slate-500">
+                            SimBrief Airframe ID
+                          </label>
+                          <a
+                            href="https://dispatch.simbrief.com/airframes"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[10px] text-sky-400/70 hover:text-sky-300 transition-colors whitespace-nowrap"
+                          >
+                            Find in SimBrief →
+                          </a>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <input
+                            className="flex-1 bg-slate-900 border border-slate-700 focus:border-slate-500 outline-none font-mono text-xs px-2 py-1.5 rounded-lg transition-colors"
+                            placeholder="e.g. 123456_1771861149220"
+                            value={ac.airframeId}
+                            onChange={(e) => updateAircraft(i, "airframeId", e.target.value)}
+                          />
+                          {ac.airframeId && (
+                            <button
+                              onClick={() => copyAirframeId(ac.airframeId, i)}
+                              title="Copy Airframe ID"
+                              className="shrink-0 px-2 py-1.5 rounded-lg border border-slate-700 hover:bg-slate-800 text-[10px] font-mono transition-colors text-slate-400 hover:text-slate-200"
+                            >
+                              {copiedIndex === i ? "✓" : "Copy"}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
 
                     {isActive && (
-                      <p className="pl-7 text-[10px] text-indigo-400/70">Active — used for SimBrief links</p>
+                      <p className="pl-7 text-[10px] text-sky-400/70">Active — used for SimBrief links</p>
                     )}
                   </div>
                 );

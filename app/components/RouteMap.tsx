@@ -32,7 +32,7 @@ function dotIcon(color: string, size = 12) {
   });
 }
 
-const originIcon = dotIcon("#6366f1", 16);
+const originIcon = dotIcon("#0ea5e9", 16);
 const destIcon   = dotIcon("#ef4444", 10);
 
 function atcDotIcon() {
@@ -84,7 +84,7 @@ export default function RouteMap({
     <div className="rounded-2xl overflow-hidden border border-slate-800 shadow-xl">
       {/* Header */}
       <div className="bg-slate-900 px-4 py-2 flex items-center gap-3">
-        <span className="text-indigo-400 font-mono font-semibold">{originIcao}</span>
+        <span className="text-sky-400 font-mono font-semibold">{originIcao}</span>
         {originCity && <span className="text-slate-400 text-sm">{originCity}</span>}
         <span className="text-slate-600 text-sm ml-auto flex items-center gap-3">
           <span className="flex items-center gap-1.5">
@@ -124,7 +124,7 @@ export default function RouteMap({
                   key={`${d.icao}-${si}-${worldOffset}`}
                   positions={seg.map(([lat, lon]) => [lat, lon + worldOffset] as [number, number])}
                   pathOptions={{
-                    color: "#6366f1",
+                    color: "#0ea5e9",
                     weight: isHovered ? 4 : 2,
                     opacity: isHovered ? 0.9 : 0.5,
                     dashArray: isHovered ? "" : "6 4",
@@ -153,7 +153,7 @@ export default function RouteMap({
                           ATC: {atcPositions.join(" · ")}
                         </div>
                       )}
-                      <div style={{ fontSize: 10, color: "#6366f1", marginTop: 5 }}>
+                      <div style={{ fontSize: 10, color: "#0ea5e9", marginTop: 5 }}>
                         Click to jump to flight
                       </div>
                     </div>
@@ -201,7 +201,7 @@ export default function RouteMap({
                         <button
                           onClick={() => onDestinationClick(d.icao)}
                           style={{
-                            marginTop: 6, fontSize: 11, color: "#818cf8",
+                            marginTop: 6, fontSize: 11, color: "#38bdf8",
                             background: "none", border: "none", cursor: "pointer", padding: 0,
                           }}
                         >
