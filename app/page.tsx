@@ -249,6 +249,7 @@ export default function Page() {
   const [vatsimAtc, setVatsimAtc] = useState<Record<string, string[]>>({});
   const [recentAirports, setRecentAirports] = useState<{ icao: string; name?: string; city?: string }[]>([]);
   const [showRecents, setShowRecents] = useState(false);
+  const [searchResults, setSearchResults] = useState<{ icao: string; name: string; city: string }[]>([]);
 
   useEffect(() => {
     setNow(new Date());
@@ -285,6 +286,18 @@ export default function Page() {
       }
     } catch { /* ignore */ }
   }, []);
+
+  useEffect(() => {
+    const q = icao.trim();
+    if (q.length < 2) { setSearchResults([]); return; }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/airports/search?q=${encodeURIComponent(q)}`);
+        if (res.ok) setSearchResults(await res.json());
+      } catch { /* ignore */ }
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [icao]);
 
   async function load() {
     const v = icao.trim().toUpperCase();
@@ -462,22 +475,39 @@ export default function Page() {
                 onFocus={() => setShowRecents(true)}
                 onBlur={() => setTimeout(() => setShowRecents(false), 150)}
               />
-              {showRecents && recentAirports.length > 0 && (
+              {showRecents && (searchResults.length > 0 || recentAirports.length > 0) && (
                 <div className="absolute top-full left-0 right-0 z-10 mt-1 rounded-xl bg-slate-900 border border-slate-800 shadow-xl overflow-hidden">
-                  {recentAirports.map(ap => (
-                    <button
-                      key={ap.icao}
-                      className="w-full text-left px-4 py-2 hover:bg-slate-800 transition-colors"
-                      onMouseDown={(e) => { e.preventDefault(); setIcao(ap.icao); setShowRecents(false); }}
-                    >
-                      <span className="font-mono text-sm text-slate-200">{ap.icao}</span>
-                      {(ap.name || ap.city) && (
-                        <div className="text-xs text-slate-500 mt-0.5 truncate">
-                          {[ap.name, ap.city].filter(Boolean).join(" · ")}
-                        </div>
-                      )}
-                    </button>
-                  ))}
+                  {searchResults.length > 0 ? (
+                    searchResults.map(r => (
+                      <button
+                        key={r.icao}
+                        className="w-full text-left px-4 py-2 hover:bg-slate-800 transition-colors"
+                        onMouseDown={(e) => { e.preventDefault(); setIcao(r.icao); setSearchResults([]); setShowRecents(false); }}
+                      >
+                        <span className="font-mono text-sm text-slate-200">{r.icao}</span>
+                        {(r.name || r.city) && (
+                          <div className="text-xs text-slate-500 mt-0.5 truncate">
+                            {[r.name, r.city].filter(Boolean).join(" · ")}
+                          </div>
+                        )}
+                      </button>
+                    ))
+                  ) : (
+                    recentAirports.map(ap => (
+                      <button
+                        key={ap.icao}
+                        className="w-full text-left px-4 py-2 hover:bg-slate-800 transition-colors"
+                        onMouseDown={(e) => { e.preventDefault(); setIcao(ap.icao); setShowRecents(false); }}
+                      >
+                        <span className="font-mono text-sm text-slate-200">{ap.icao}</span>
+                        {(ap.name || ap.city) && (
+                          <div className="text-xs text-slate-500 mt-0.5 truncate">
+                            {[ap.name, ap.city].filter(Boolean).join(" · ")}
+                          </div>
+                        )}
+                      </button>
+                    ))
+                  )}
                 </div>
               )}
               {originInfo && (
@@ -662,8 +692,10 @@ export default function Page() {
                         >
                           <td className="py-2 pr-4 whitespace-nowrap">
                             <span className="font-mono">{r.number ?? "—"}</span>
-                            {r.airlineName && (
-                              <div className="text-xs text-slate-400 mt-0.5">{r.airlineName}</div>
+                            {(r.airlineIcao || r.airlineName) && (
+                              <div className="text-xs text-slate-400 mt-0.5">
+                                {[r.airlineIcao, r.airlineName].filter(Boolean).join(" · ")}
+                              </div>
                             )}
                           </td>
                           <td className="py-2 pr-4">
