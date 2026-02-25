@@ -247,7 +247,7 @@ export default function Page() {
   const [showRouteMap, setShowRouteMap] = useState(false);
   const [highlightedDest, setHighlightedDest] = useState<string | null>(null);
   const [vatsimAtc, setVatsimAtc] = useState<Record<string, string[]>>({});
-  const [recentAirports, setRecentAirports] = useState<string[]>([]);
+  const [recentAirports, setRecentAirports] = useState<{ icao: string; name?: string; city?: string }[]>([]);
   const [showRecents, setShowRecents] = useState(false);
 
   useEffect(() => {
@@ -276,7 +276,13 @@ export default function Page() {
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem("recentAirports") ?? "[]");
-      if (Array.isArray(saved)) setRecentAirports(saved);
+      if (Array.isArray(saved)) {
+        const seen = new Set<string>();
+        const normalized = saved
+          .map(item => typeof item === "string" ? { icao: item } : item)
+          .filter(item => item?.icao && !seen.has(item.icao) && seen.add(item.icao));
+        setRecentAirports(normalized);
+      }
     } catch { /* ignore */ }
   }, []);
 
@@ -285,11 +291,6 @@ export default function Page() {
     if (!v) return;
 
     setQueriedIcao(v);
-    setRecentAirports(prev => {
-      const updated = [v, ...prev.filter(r => r !== v)].slice(0, 6);
-      try { localStorage.setItem("recentAirports", JSON.stringify(updated)); } catch { /* ignore */ }
-      return updated;
-    });
     setLoading(true);
     setData(null);
     setAirportMap({});
@@ -316,6 +317,15 @@ export default function Page() {
           if (val) filtered[k] = val;
         }
         setAirportMap(filtered);
+        const originData = filtered[v];
+        setRecentAirports(prev => {
+          const updated = [
+            { icao: v, name: originData?.name, city: originData?.city },
+            ...prev.filter(r => r.icao !== v),
+          ].slice(0, 6);
+          try { localStorage.setItem("recentAirports", JSON.stringify(updated)); } catch { /* ignore */ }
+          return updated;
+        });
       }
     } catch {
       setData({ error: "Network error – check your connection and try again." });
@@ -456,11 +466,16 @@ export default function Page() {
                 <div className="absolute top-full left-0 right-0 z-10 mt-1 rounded-xl bg-slate-900 border border-slate-800 shadow-xl overflow-hidden">
                   {recentAirports.map(ap => (
                     <button
-                      key={ap}
-                      className="w-full text-left px-4 py-2 text-sm font-mono text-slate-300 hover:bg-slate-800 transition-colors"
-                      onMouseDown={(e) => { e.preventDefault(); setIcao(ap); setShowRecents(false); }}
+                      key={ap.icao}
+                      className="w-full text-left px-4 py-2 hover:bg-slate-800 transition-colors"
+                      onMouseDown={(e) => { e.preventDefault(); setIcao(ap.icao); setShowRecents(false); }}
                     >
-                      {ap}
+                      <span className="font-mono text-sm text-slate-200">{ap.icao}</span>
+                      {(ap.name || ap.city) && (
+                        <div className="text-xs text-slate-500 mt-0.5 truncate">
+                          {[ap.name, ap.city].filter(Boolean).join(" · ")}
+                        </div>
+                      )}
                     </button>
                   ))}
                 </div>
