@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import dynamic from "next/dynamic";
 import { useUserSettings } from "@/app/hooks/useUserSettings";
 import SettingsPanel from "@/app/components/SettingsPanel";
@@ -404,12 +405,15 @@ export default function Page() {
     <main className="min-h-screen bg-slate-950 text-slate-100 p-6">
       <div className="max-w-6xl mx-auto space-y-4">
         <header className="flex items-start justify-between">
+          <div className="flex items-center gap-3">
+            <Image src="/logo.png" alt="Flight Dispatcher logo" width={72} height={72} className="rounded-xl" />
           <div className="space-y-1">
             <h1 className="text-2xl font-semibold">Flight Dispatcher</h1>
             <p className="text-slate-400 text-sm">
               Pick an airport → get upcoming international departures → open in SimBrief
               {activeAircraft?.name ? ` with ${activeAircraft.name}` : ""}
             </p>
+          </div>
           </div>
           <button
             onClick={() => setSettingsOpen(true)}
