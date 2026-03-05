@@ -119,6 +119,27 @@ function estArrISO(depISO: string, mins: number): string {
   return new Date(new Date(depISO).getTime() + mins * 60000).toISOString();
 }
 
+function statusBadge(status: string | undefined): ReactNode {
+  if (!status) return null;
+  const s = status.toLowerCase();
+  if (s === "cancelled" || s === "cancelleduncertain" || s === "canceled") {
+    return <span className="text-[10px] px-1.5 py-px rounded font-semibold bg-red-950 text-red-400 border border-red-800/60">CANCELLED</span>;
+  }
+  if (s === "delayed") {
+    return <span className="text-[10px] px-1.5 py-px rounded font-semibold bg-amber-950 text-amber-400 border border-amber-800/60">DELAYED</span>;
+  }
+  if (s === "diverted") {
+    return <span className="text-[10px] px-1.5 py-px rounded font-semibold bg-purple-950 text-purple-400 border border-purple-800/60">DIVERTED</span>;
+  }
+  if (s === "departed" || s === "enroute") {
+    return <span className="text-[10px] px-1.5 py-px rounded font-semibold bg-slate-800 text-slate-400 border border-slate-700/60">DEPARTED</span>;
+  }
+  if (s === "boarding" || s === "gateclosed") {
+    return <span className="text-[10px] px-1.5 py-px rounded font-semibold bg-green-950 text-green-400 border border-green-800/60">BOARDING</span>;
+  }
+  return null;
+}
+
 function countryName(code: string): string {
   try {
     return new Intl.DisplayNames(["en"], { type: "region" }).of(code.toUpperCase()) ?? code;
@@ -183,22 +204,30 @@ type Row = {
   number?: string;
   airlineName?: string;
   airlineIcao?: string;
-  dep?: string;
+  dep?: string;          // scheduled departure UTC
+  depRevised?: string;   // revised / actual departure UTC (if changed)
   arr?: string;          // real scheduled arrival UTC (withLeg=true)
+  arrRevised?: string;   // revised / actual arrival UTC (if changed)
   estMins: number | null; // haversine fallback when arr is missing
+  status?: string;       // raw status string from AeroDataBox
 };
 
 type FlightEntry = {
   departure?: {
     scheduledTime?: { utc?: string; local?: string };
+    revisedTime?:   { utc?: string; local?: string };
+    actualTime?:    { utc?: string; local?: string };
     terminal?: string;
   };
   arrival?: {
     airport?: { icao?: string; iata?: string; countryCode?: string; timeZone?: string };
     scheduledTime?: { utc?: string; local?: string };
+    revisedTime?:   { utc?: string; local?: string };
+    actualTime?:    { utc?: string; local?: string };
   };
   number?: string;
   airline?: { name?: string; iata?: string; icao?: string };
+  status?: string; // e.g. "Cancelled", "Delayed", "Departed", "Expected", "EnRoute" …
 };
 
 type FidsResponse = {
@@ -370,6 +399,15 @@ export default function Page() {
           estMins = estFlightMins(km);
         }
 
+        // Revised / actual departure: prefer actualTime, then revisedTime
+        const depRevised = normalizeUtc(
+          f.departure?.actualTime?.utc ?? f.departure?.revisedTime?.utc
+        );
+        // Revised / actual arrival: prefer actualTime, then revisedTime
+        const arrRevised = normalizeUtc(
+          f.arrival?.actualTime?.utc ?? f.arrival?.revisedTime?.utc
+        );
+
         return {
           dest,
           destCity: destInfo?.city,
@@ -379,8 +417,11 @@ export default function Page() {
           airlineName: f.airline?.name,
           airlineIcao: f.airline?.icao,
           dep,
+          depRevised: depRevised !== dep ? depRevised : undefined,
           arr,
-          estMins
+          arrRevised: arrRevised !== arr ? arrRevised : undefined,
+          estMins,
+          status: f.status,
         };
       })
       .filter((r) => {
@@ -691,7 +732,10 @@ export default function Page() {
                           }}
                         >
                           <td className="py-2 pr-4 whitespace-nowrap">
-                            <span className="font-mono">{r.number ?? "—"}</span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-mono">{r.number ?? "—"}</span>
+                              {statusBadge(r.status)}
+                            </div>
                             {(r.airlineIcao || r.airlineName) && (
                               <div className="text-xs text-slate-400 mt-0.5">
                                 {[r.airlineIcao, r.airlineName].filter(Boolean).join(" · ")}
@@ -716,12 +760,25 @@ export default function Page() {
                           <td className="py-2 pr-4 whitespace-nowrap">
                             {r.dep ? (
                               <div>
-                                <span>
-                                  <span className="mr-1">{dayNightIcon(r.dep, originTz)}</span>
-                                  {fmtTime(r.dep, timeMode, displayTz, hour12)}
-                                </span>
+                                {r.depRevised ? (
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="line-through text-slate-500 text-xs">
+                                      {fmtTime(r.dep, timeMode, displayTz, hour12)}
+                                    </span>
+                                    <span>
+                                      <span className="mr-1">{dayNightIcon(r.depRevised, originTz)}</span>
+                                      <span className="text-amber-400">{fmtTime(r.depRevised, timeMode, displayTz, hour12)}</span>
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <span>
+                                    <span className="mr-1">{dayNightIcon(r.dep, originTz)}</span>
+                                    {fmtTime(r.dep, timeMode, displayTz, hour12)}
+                                  </span>
+                                )}
                                 {now && (() => {
-                                  const due = fmtDue(r.dep, now);
+                                  const effectiveDep = r.depRevised ?? r.dep;
+                                  const due = fmtDue(effectiveDep, now);
                                   return (
                                     <div className={`text-xs mt-0.5 ${due.color}`}>{due.label}</div>
                                   );
@@ -731,10 +788,22 @@ export default function Page() {
                           </td>
                           <td className="py-2 pr-4 whitespace-nowrap">
                             {arrISO ? (
-                              <span>
-                                <span className="mr-1">{dayNightIcon(arrISO, r.destTz ?? undefined)}</span>
-                                {(isEstimate ? "~" : "") + fmtTime(arrISO, timeMode, arrTz, hour12)}
-                              </span>
+                              r.arrRevised ? (
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="line-through text-slate-500 text-xs">
+                                    {fmtTime(arrISO, timeMode, arrTz, hour12)}
+                                  </span>
+                                  <span>
+                                    <span className="mr-1">{dayNightIcon(r.arrRevised, r.destTz ?? undefined)}</span>
+                                    <span className="text-amber-400">{fmtTime(r.arrRevised, timeMode, arrTz, hour12)}</span>
+                                  </span>
+                                </div>
+                              ) : (
+                                <span>
+                                  <span className="mr-1">{dayNightIcon(arrISO, r.destTz ?? undefined)}</span>
+                                  {(isEstimate ? "~" : "") + fmtTime(arrISO, timeMode, arrTz, hour12)}
+                                </span>
+                              )
                             ) : "—"}
                           </td>
                           <td className="py-2 pr-4 whitespace-nowrap">
