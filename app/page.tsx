@@ -210,6 +210,7 @@ type Row = {
   arrRevised?: string;   // revised / actual arrival UTC (if changed)
   estMins: number | null; // haversine fallback when arr is missing
   status?: string;       // raw status string from AeroDataBox
+  codeshares?: string[]; // codeshare flight numbers for the same physical flight
 };
 
 type FlightEntry = {
@@ -228,6 +229,7 @@ type FlightEntry = {
   number?: string;
   airline?: { name?: string; iata?: string; icao?: string };
   status?: string; // e.g. "Cancelled", "Delayed", "Departed", "Expected", "EnRoute" …
+  codeshareStatus?: string; // "IsOperator" | "IsCodeshared"
 };
 
 type FidsResponse = {
@@ -279,6 +281,28 @@ export default function Page() {
   const [recentAirports, setRecentAirports] = useState<{ icao: string; name?: string; city?: string }[]>([]);
   const [showRecents, setShowRecents] = useState(false);
   const [searchResults, setSearchResults] = useState<{ icao: string; name: string; city: string }[]>([]);
+  const [expandedCodeshares, setExpandedCodeshares] = useState<Set<string>>(new Set());
+
+  function toggleCodeshares(key: string) {
+    setExpandedCodeshares(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }
+
+  type SortCol = "flight" | "dest" | "dep" | "dur";
+  const [sortCol, setSortCol] = useState<SortCol | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  function toggleSort(col: SortCol) {
+    if (sortCol === col) {
+      setSortDir(d => d === "asc" ? "desc" : "asc");
+    } else {
+      setSortCol(col);
+      setSortDir("asc");
+    }
+  }
 
   useEffect(() => {
     setNow(new Date());
@@ -381,8 +405,7 @@ export default function Page() {
   const rows: Row[] = useMemo(() => {
     const list = getList(data);
 
-    return list
-      .map((f: FlightEntry) => {
+    const mapped = list.map((f: FlightEntry) => {
         const dep = normalizeUtc(f.departure?.scheduledTime?.utc);
         const arr = normalizeUtc(f.arrival?.scheduledTime?.utc);
         const dest = f.arrival?.airport?.icao ?? f.arrival?.airport?.iata ?? "—";
@@ -399,11 +422,9 @@ export default function Page() {
           estMins = estFlightMins(km);
         }
 
-        // Revised / actual departure: prefer actualTime, then revisedTime
         const depRevised = normalizeUtc(
           f.departure?.actualTime?.utc ?? f.departure?.revisedTime?.utc
         );
-        // Revised / actual arrival: prefer actualTime, then revisedTime
         const arrRevised = normalizeUtc(
           f.arrival?.actualTime?.utc ?? f.arrival?.revisedTime?.utc
         );
@@ -422,8 +443,33 @@ export default function Page() {
           arrRevised: arrRevised !== arr ? arrRevised : undefined,
           estMins,
           status: f.status,
+          codeshareStatus: f.codeshareStatus,
+          codeshares: [] as string[],
         };
-      })
+      });
+
+    // Group codeshare flights: same dep UTC + same dest → one row
+    const groupMap = new Map<string, typeof mapped[0]>();
+    for (const row of mapped) {
+      const key = `${row.dep ?? ""}|${row.dest}`;
+      if (!groupMap.has(key)) {
+        groupMap.set(key, row);
+      } else {
+        const existing = groupMap.get(key)!;
+        if (row.codeshareStatus === "IsOperator" && existing.codeshareStatus !== "IsOperator") {
+          // Promote this row to main, demote existing to codeshare
+          groupMap.set(key, {
+            ...row,
+            codeshares: [...existing.codeshares, ...(existing.number ? [existing.number] : [])],
+          });
+        } else {
+          // Add this number as a codeshare of the existing main row
+          if (row.number) existing.codeshares.push(row.number);
+        }
+      }
+    }
+
+    return Array.from(groupMap.values())
       .filter((r) => {
         // Only show international flights
         if (!originInfo) return true;
@@ -466,6 +512,34 @@ export default function Page() {
     }
     return Array.from(map.values());
   }, [rows, airportMap, originInfo]);
+
+  const sortedRows = useMemo(() => {
+    if (!sortCol) return rows;
+    return [...rows].sort((a, b) => {
+      let cmp = 0;
+      if (sortCol === "flight") {
+        const aCompany = (a.number ?? "").match(/^[A-Z0-9]{2,3}/)?.[0] ?? (a.number ?? "");
+        const bCompany = (b.number ?? "").match(/^[A-Z0-9]{2,3}/)?.[0] ?? (b.number ?? "");
+        cmp = aCompany.localeCompare(bCompany);
+        if (cmp === 0) cmp = (a.number ?? "").localeCompare(b.number ?? "");
+      } else if (sortCol === "dest") {
+        cmp = a.dest.localeCompare(b.dest);
+      } else if (sortCol === "dep") {
+        const aTime = a.dep ? new Date(a.dep).getTime() : Infinity;
+        const bTime = b.dep ? new Date(b.dep).getTime() : Infinity;
+        cmp = aTime - bTime;
+      } else if (sortCol === "dur") {
+        const aDur = (a.arr && a.dep)
+          ? Math.round((new Date(a.arr).getTime() - new Date(a.dep).getTime()) / 60000)
+          : (a.estMins ?? Infinity);
+        const bDur = (b.arr && b.dep)
+          ? Math.round((new Date(b.arr).getTime() - new Date(b.dep).getTime()) / 60000)
+          : (b.estMins ?? Infinity);
+        cmp = aDur - bDur;
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [rows, sortCol, sortDir]);
 
   const orig = queriedIcao || icao.trim().toUpperCase();
 
@@ -675,16 +749,42 @@ export default function Page() {
               <table className="w-full text-sm">
                 <thead className="text-slate-300">
                   <tr className="border-b border-slate-800">
-                    <th className="text-left py-2 pr-4">FLIGHT</th>
-                    <th className="text-left py-2 pr-4">DEST</th>
-                    <th className="text-left py-2 pr-4 min-w-[11rem]">DEP</th>
+                    {(["flight", "dest", "dep"] as SortCol[]).map((col) => (
+                      <th
+                        key={col}
+                        className={[
+                          "text-left py-2 pr-4 cursor-pointer select-none whitespace-nowrap",
+                          col === "dep" ? "min-w-[11rem]" : "",
+                        ].join(" ")}
+                        onClick={() => toggleSort(col)}
+                      >
+                        <span className="inline-flex items-center gap-1 hover:text-slate-100 transition-colors">
+                          {col.toUpperCase()}
+                          {sortCol === col
+                            ? <span className="text-sky-400">{sortDir === "asc" ? "↑" : "↓"}</span>
+                            : <span className="text-slate-700">↕</span>
+                          }
+                        </span>
+                      </th>
+                    ))}
                     <th className="text-left py-2 pr-4 min-w-[11rem]">ARR</th>
-                    <th className="text-left py-2 pr-4">DUR</th>
+                    <th
+                      className="text-left py-2 pr-4 cursor-pointer select-none whitespace-nowrap"
+                      onClick={() => toggleSort("dur")}
+                    >
+                      <span className="inline-flex items-center gap-1 hover:text-slate-100 transition-colors">
+                        DUR
+                        {sortCol === "dur"
+                          ? <span className="text-sky-400">{sortDir === "asc" ? "↑" : "↓"}</span>
+                          : <span className="text-slate-700">↕</span>
+                        }
+                      </span>
+                    </th>
                     <th className="text-left py-2 pr-3"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r, i) => {
+                  {sortedRows.map((r, i) => {
                     // Real arrival from withLeg=true; fall back to haversine estimate
                     const arrISO = r.arr ?? (r.dep && r.estMins ? estArrISO(r.dep, r.estMins) : undefined);
                     const isEstimate = !r.arr;
@@ -735,10 +835,28 @@ export default function Page() {
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="font-mono">{r.number ?? "—"}</span>
                               {statusBadge(r.status)}
+                              {r.codeshares && r.codeshares.length > 0 && (() => {
+                                const key = `${r.number}|${r.dep}`;
+                                const expanded = expandedCodeshares.has(key);
+                                return (
+                                  <button
+                                    className="text-[10px] px-1.5 py-px rounded font-mono bg-slate-800 text-slate-400 border border-slate-700 hover:bg-slate-700 transition"
+                                    onClick={(e) => { e.stopPropagation(); toggleCodeshares(key); }}
+                                    title={expanded ? "Hide codeshares" : r.codeshares.join(" · ")}
+                                  >
+                                    {expanded ? "−" : `+${r.codeshares.length}`}
+                                  </button>
+                                );
+                              })()}
                             </div>
                             {(r.airlineIcao || r.airlineName) && (
                               <div className="text-xs text-slate-400 mt-0.5">
                                 {[r.airlineIcao, r.airlineName].filter(Boolean).join(" · ")}
+                              </div>
+                            )}
+                            {r.codeshares && r.codeshares.length > 0 && expandedCodeshares.has(`${r.number}|${r.dep}`) && (
+                              <div className="text-xs text-slate-500 mt-0.5 font-mono whitespace-normal max-w-[180px]">
+                                {r.codeshares.join(" · ")}
                               </div>
                             )}
                           </td>
