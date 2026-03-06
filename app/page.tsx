@@ -282,6 +282,7 @@ export default function Page() {
   const [showRecents, setShowRecents] = useState(false);
   const [searchResults, setSearchResults] = useState<{ icao: string; name: string; city: string }[]>([]);
   const [expandedCodeshares, setExpandedCodeshares] = useState<Set<string>>(new Set());
+  const [intlOnly, setIntlOnly] = useState(true);
 
   function toggleCodeshares(key: string) {
     setExpandedCodeshares(prev => {
@@ -471,12 +472,12 @@ export default function Page() {
 
     return Array.from(groupMap.values())
       .filter((r) => {
-        // Only show international flights
+        if (!intlOnly) return true;
         if (!originInfo) return true;
         if (!r.destCountry) return true;
         return r.destCountry.toUpperCase() !== originInfo.country.toUpperCase();
       });
-  }, [data, airportMap, queriedIcao, originInfo]);
+  }, [data, airportMap, queriedIcao, originInfo, intlOnly]);
 
   // Derive origin airport timezone from departure local time offset string (always computed for sun/moon)
   const originTz = useMemo(() => {
@@ -645,7 +646,7 @@ export default function Page() {
           </div>
 
           {/* Row 2: time mode + 12h/24h toggle (aligned with input) */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {(["local", "airport", "zulu"] as TimeMode[]).map((m) => (
               <button
                 key={m}
@@ -680,6 +681,20 @@ export default function Page() {
                 {hour12 ? "12h" : "24h"}
               </button>
             </div>
+
+            <div className="w-px h-5 bg-slate-700 shrink-0" />
+            <button
+              className={[
+                "rounded-xl px-3 py-2 text-sm border transition whitespace-nowrap",
+                intlOnly
+                  ? "bg-slate-100 text-slate-900 border-slate-100"
+                  : "border-slate-800 hover:bg-slate-900"
+              ].join(" ")}
+              onClick={() => setIntlOnly(v => !v)}
+              title="Toggle international-only filter"
+            >
+              Intl only
+            </button>
           </div>
 
           {/* Row 3: aircraft selector + route map toggle */}
@@ -958,7 +973,7 @@ export default function Page() {
               </table>
 
               <div className="mt-2 text-xs text-slate-500">
-                Showing {rows.length} international flights
+                Showing {rows.length} {intlOnly ? "international" : ""} flights
                 {activeAircraft?.name ? ` · ${activeAircraft.name}` : ""}
                 {" · "}Click a row to show the flight path
               </div>
