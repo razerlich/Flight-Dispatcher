@@ -14,7 +14,7 @@ export async function GET() {
   const data = await res.json();
   const controllers: Array<{ callsign: string }> = data.controllers ?? [];
 
-  const atc: Record<string, string[]> = {};
+  const atcSets: Record<string, Set<string>> = {};
 
   for (const ctrl of controllers) {
     const parts = ctrl.callsign.split("_");
@@ -26,7 +26,12 @@ export async function GET() {
     const suffix = parts[parts.length - 1];
     if (!POSITIONS.includes(suffix)) continue;
 
-    (atc[icao] ??= []).push(suffix);
+    (atcSets[icao] ??= new Set()).add(suffix);
+  }
+
+  const atc: Record<string, string[]> = {};
+  for (const [icao, set] of Object.entries(atcSets)) {
+    atc[icao] = Array.from(set);
   }
 
   return NextResponse.json(atc);
